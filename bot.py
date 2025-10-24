@@ -5,16 +5,12 @@ import random
 import os
 import requests
 
-# Настройки
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 HF_API_TOKEN = os.getenv('HF_API_TOKEN')
 
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN не установлен")
     exit(1)
-
-print("🔮 Запускаем магический шар...")
-print(f"🤖 Hugging Face: {'✅ Настроен' if HF_API_TOKEN else '❌ Не настроен'}")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -36,79 +32,56 @@ def get_keyboard():
     markup.add(button)
     return markup
 
-def test_huggingface_detailed():
-    """Детальный тест Hugging Face"""
-    if not HF_API_TOKEN:
-        return "❌ Токен не установлен"
+def test_alternative_models():
+    """Тестируем разные модели"""
+    models_to_test = [
+        "distilgpt2",
+        "microsoft/DialoGPT-small", 
+        "facebook/blenderbot-400M-distill",
+        "EleutherAI/gpt-neo-125M",
+        "google/flan-t5-small"
+    ]
     
-    try:
-        API_URL = "https://api-inference.huggingface.co/models/gpt2"
-        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-        
-        payload = {
-            "inputs": "Say hello",
-            "parameters": {"max_length": 10}
-        }
-        
-        print("🔍 Тестируем Hugging Face API...")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        
-        print(f"📡 HTTP статус: {response.status_code}")
-        print(f"📄 Ответ: {response.text[:200]}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            return f"✅ API работает! Ответ: {result}"
-        elif response.status_code == 401:
-            return "❌ Ошибка 401: Неверный токен API"
-        elif response.status_code == 404:
-            return "❌ Ошибка 404: Модель не найдена"
-        elif response.status_code == 503:
-            return "🔄 Модель загружается... Попробуй через 1-2 минуты"
-        else:
-            return f"❌ Ошибка {response.status_code}: {response.text}"
+    results = []
+    for model in models_to_test:
+        try:
+            API_URL = f"https://api-inference.huggingface.co/models/{model}"
+            headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
             
-    except Exception as e:
-        return f"❌ Исключение: {str(e)}"
+            payload = {"inputs": "Hello", "parameters": {"max_length": 10}}
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                results.append(f"✅ {model} - РАБОТАЕТ")
+            else:
+                results.append(f"❌ {model} - {response.status_code}")
+                
+        except Exception as e:
+            results.append(f"❌ {model} - Ошибка")
+    
+    return "\n".join(results)
 
-def get_ai_prediction(question):
-    """Функция для AI с логированием"""
-    if not HF_API_TOKEN:
-        print("❌ HF_API_TOKEN не установлен")
-        return random.choice(YES_NO_BASE)
+def get_simple_ai_response(question):
+    """Простая AI логика на базовых правилах"""
+    question_lower = question.lower()
     
-    try:
-        API_URL = "https://api-inference.huggingface.co/models/gpt2"
-        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-        
-        prompt = f"Q: {question} A:"
-        payload = {
-            "inputs": prompt,
-            "parameters": {"max_length": 50, "temperature": 0.8}
-        }
-        
-        print(f"🔄 Отправляем запрос: '{question}'")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        
-        print(f"📡 Статус: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            print(f"📊 Raw ответ: {result}")
-            
-            if isinstance(result, list) and len(result) > 0:
-                answer = result[0]['generated_text'].strip()
-                if prompt in answer:
-                    answer = answer.replace(prompt, '').strip()
-                if answer and len(answer) > 3:
-                    print(f"✅ AI ответил: '{answer}'")
-                    return answer
-        
-        print("❌ AI не сработал, используем случайный ответ")
-        return random.choice(YES_NO_BASE)
-            
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
+    # Простые правила для ответов
+    if any(word in question_lower for word in ['любовь', 'love', 'встречу', 'relationship']):
+        return random.choice(['Любовь ждет тебя за углом! ❤️', 'Сердце подсказывает - да! 💘', 'Встретишь свою половинку скоро! ✨'])
+    
+    elif any(word in question_lower for word in ['работа', 'job', 'карьер', 'career']):
+        return random.choice(['Успех в работе близок! 💼', 'Новые возможности на горизонте! 🚀', 'Карьера пойдет вверх! 📈'])
+    
+    elif any(word in question_lower for word in ['деньги', 'money', 'богат', 'rich']):
+        return random.choice(['Финансовый поток усиливается! 💰', 'Деньги идут к тебе! 🏦', 'Финансовая удача близка! 💸'])
+    
+    elif any(word in question_lower for word in ['здоровь', 'health', 'болезн']):
+        return random.choice(['Здоровье будет крепким! 💪', 'Энергия переполняет тебя! ⚡', 'Тело благодарит за заботу! 🌿'])
+    
+    elif any(word in question_lower for word in ['путешеств', 'travel', 'отпуск']):
+        return random.choice(['Новые горизонты ждут! ✈️', 'Приключения зовут! 🗺️', 'Открывай новые места! 🌍'])
+    
+    else:
         return random.choice(YES_NO_BASE)
 
 @bot.message_handler(commands=['start'])
@@ -117,50 +90,37 @@ def start(message):
     user_locks[user_id] = 0
     bot.send_message(
         message.chat.id, 
-        "🔮 *Привет! Я магический шар!*\n\nИспользуй /diagnostic для проверки AI", 
+        "🔮 *Привет! Я магический шар!*\n\nЗадай мне любой вопрос о будущем!", 
         parse_mode='Markdown', 
         reply_markup=get_keyboard()
     )
 
-@bot.message_handler(commands=['diagnostic'])
-def diagnostic(message):
-    """Полная диагностика"""
-    bot.send_message(message.chat.id, "🔧 *Запускаем диагностику...*", parse_mode='Markdown')
+@bot.message_handler(commands=['model_test'])
+def model_test(message):
+    """Тест всех моделей"""
+    bot.send_message(message.chat.id, "🔍 *Тестируем модели Hugging Face...*", parse_mode='Markdown')
     
-    # Проверяем токен
-    token_status = "✅ Токен установлен" if HF_API_TOKEN else "❌ Токен отсутствует"
+    if not HF_API_TOKEN:
+        bot.send_message(message.chat.id, "❌ Токен не установлен", parse_mode='Markdown')
+        return
     
-    # Тестируем API
-    api_status = test_huggingface_detailed()
-    
-    diagnostic_info = f"""
-🔧 *ДИАГНОСТИКА AI:*
+    results = test_alternative_models()
+    bot.send_message(message.chat.id, f"🤖 *Результаты теста:*\n{results}", parse_mode='Markdown')
 
-*Токен Hugging Face:*
-{token_status}
-
-*API статус:*
-{api_status}
-
-*Рекомендации:*
-1. Проверь HF_API_TOKEN в настройках Render
-2. Убедись что токен активен в Hugging Face
-3. Попробуй создать новый токен
-    """
+@bot.message_handler(commands=['smart_test'])
+def smart_test(message):
+    """Тест умных ответов"""
+    test_questions = [
+        "Я найду любовь?",
+        "Будет ли у меня хорошая работа?",
+        "Разбогатею ли я?",
+        "Буду ли я здоров?"
+    ]
     
-    bot.send_message(message.chat.id, diagnostic_info, parse_mode='Markdown')
-
-@bot.message_handler(commands=['test'])
-def test(message):
-    """Тест AI"""
-    bot.send_message(message.chat.id, "🧪 *Тестируем AI...*", parse_mode='Markdown')
+    question = random.choice(test_questions)
+    answer = get_simple_ai_response(question)
     
-    answer = get_ai_prediction("Will I be happy?")
-    
-    if answer in YES_NO_BASE:
-        bot.send_message(message.chat.id, f"❌ AI не работает\n🤖 Ответ: {answer}", parse_mode='Markdown')
-    else:
-        bot.send_message(message.chat.id, f"✅ AI РАБОТАЕТ!\n🤖 Ответ: {answer}", parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"🧪 *Тест умных ответов:*\n❓ {question}\n🤖 {answer}", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -173,18 +133,22 @@ def handle_message(message):
         return
     
     if message.text == '🚀 Отправить запрос в вселенную':
-        question = "What will happen today?"
+        question = "Что ждет меня в будущем?"
     else:
         question = message.text
     
     user_locks[user_id] = current_time
     
-    bot.send_message(message.chat.id, "🔮 Думаю...", parse_mode='Markdown')
-    time.sleep(1)
+    bot.send_message(message.chat.id, "🔮 Трясу шар...", parse_mode='Markdown')
+    time.sleep(2)
     
-    answer = get_ai_prediction(question)
+    # Используем умные ответы вместо Hugging Face
+    answer = get_simple_ai_response(question)
     bot.send_message(message.chat.id, f"🔮 {answer}", parse_mode='Markdown')
+    time.sleep(1)
+    bot.send_message(message.chat.id, "Готов к новым вопросам! 🚀", reply_markup=get_keyboard())
 
 if __name__ == '__main__':
-    print("✅ Бот запущен! Ожидаем сообщения...")
+    print("🔮 Магический шар запущен!")
+    print("🤖 Режим: Умные ответы (Hugging Face недоступен)")
     bot.polling(none_stop=True)
