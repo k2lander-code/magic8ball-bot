@@ -36,75 +36,69 @@ def get_keyboard():
     markup.add(button)
     return markup
 
-def get_working_model():
-    """Возвращает работающую модель"""
-    models = [
-        "microsoft/DialoGPT-small",  # Меньшая версия - точно работает
-        "gpt2",                       # Базовая модель
-        "distilgpt2",                 # Упрощенная GPT-2
-        "facebook/blenderbot-400M-distill"
-    ]
-    return models[0]  # Начинаем с DialoGPT-small
-
 def test_huggingface_connection():
-    """Тестируем подключение к работающей модели"""
+    """Тестируем доступные модели"""
     if not HF_API_TOKEN:
         return False, "❌ Токен не установлен"
     
-    try:
-        model = get_working_model()
-        API_URL = f"https://api-inference.huggingface.co/models/{model}"
-        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-        
-        test_prompt = "Скажи привет"
-        payload = {
-            "inputs": test_prompt,
-            "parameters": {"max_length": 20, "temperature": 0.7}
-        }
-        
-        print(f"🔍 Тестируем модель: {model}")
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        
-        print(f"📡 Статус: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            if isinstance(result, list) and len(result) > 0:
-                answer = result[0]['generated_text'].strip()
-                return True, f"✅ Модель {model} работает: {answer}"
-            else:
-                return False, f"❌ Пустой ответ от {model}"
-        elif response.status_code == 503:
-            return False, f"❌ Модель {model} загружается... Попробуй через минуту"
-        else:
-            return False, f"❌ Ошибка {response.status_code} для {model}"
+    # Тестируем разные модели
+    test_models = [
+        "gpt2",                          # Базовая модель - всегда работает
+        "distilgpt2",                    # Упрощенная GPT-2
+        "microsoft/DialoGPT-small",      # Пробуем еще раз
+        "facebook/blenderbot-400M-distill"
+    ]
+    
+    for model in test_models:
+        try:
+            API_URL = f"https://api-inference.huggingface.co/models/{model}"
+            headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
             
-    except Exception as e:
-        return False, f"❌ Исключение: {str(e)}"
+            payload = {
+                "inputs": "Скажи привет",
+                "parameters": {"max_length": 10}
+            }
+            
+            print(f"🔍 Тестируем: {model}")
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    answer = result[0]['generated_text'].strip()
+                    return True, f"✅ {model} работает: {answer}"
+            elif response.status_code == 503:
+                return False, f"🔄 {model} загружается... Подожди 1-2 минуты"
+                
+        except Exception as e:
+            print(f"❌ {model}: {e}")
+            continue
+    
+    return False, "❌ Все модели недоступны. Используем базовые ответы."
 
 def get_huggingface_prediction(question):
-    """Упрощенная функция с работающей моделью"""
+    """Простая функция с GPT-2"""
     if not HF_API_TOKEN:
         return random.choice(YES_NO_BASE)
     
     try:
-        model = get_working_model()
-        API_URL = f"https://api-inference.huggingface.co/models/{model}"
+        # Используем GPT-2 - точно работает
+        API_URL = "https://api-inference.huggingface.co/models/gpt2"
         headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
         
-        # Простой промпт
-        prompt = f"Вопрос: {question} Ответ:"
+        # Английский промпт для лучших результатов
+        prompt = f"Q: {question} A:"
         
         payload = {
             "inputs": prompt,
             "parameters": {
-                "max_length": 60,
-                "temperature": 0.8,
+                "max_length": 80,
+                "temperature": 0.9,
                 "do_sample": True,
             }
         }
         
-        print(f"🔄 Запрос к {model}: '{question}'")
+        print(f"🔄 Запрос к GPT-2: '{question}'")
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
         
         print(f"📡 Статус: {response.status_code}")
@@ -115,11 +109,14 @@ def get_huggingface_prediction(question):
             
             if isinstance(result, list) and len(result) > 0:
                 answer = result[0]['generated_text'].strip()
+                # Убираем промпт
                 if prompt in answer:
                     answer = answer.replace(prompt, '').strip()
                 
                 if answer and len(answer) > 3:
-                    return answer
+                    # Переводим/адаптируем ответ
+                    russian_answer = translate_to_russian(answer)
+                    return russian_answer
             
         return random.choice(YES_NO_BASE)
             
@@ -127,15 +124,31 @@ def get_huggingface_prediction(question):
         print(f"❌ Ошибка: {e}")
         return random.choice(YES_NO_BASE)
 
+def translate_to_russian(text):
+    """Упрощенный перевод ответа на русский"""
+    # Простая замена ключевых слов
+    translations = {
+        "yes": "да", "no": "нет", "maybe": "возможно",
+        "certainly": "конечно", "probably": "вероятно",
+        "hello": "привет", "love": "любовь", "future": "будущее"
+    }
+    
+    text_lower = text.lower()
+    for eng, rus in translations.items():
+        if eng in text_lower:
+            return text.replace(eng, rus).capitalize()
+    
+    return text
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     user_locks[user_id] = 0
     bot.send_message(
         message.chat.id, 
-        "🔮 *Привет! Я магический шар!*", 
+        "🔮 *Привет! Я магический шар!*\n\nЗадай вопрос на русском или английском!", 
         parse_mode='Markdown', 
-        reply_mup=get_keyboard()
+        reply_markup=get_keyboard()
     )
 
 @bot.message_handler(commands=['test_ai'])
@@ -144,39 +157,34 @@ def test_ai(message):
     connection_ok, connection_msg = test_huggingface_connection()
     
     if connection_ok:
-        question = "Стоит ли мне учить Python?"
+        # Тестируем на английском для лучших результатов
+        question = "Will I find love this year?"
         answer = get_huggingface_prediction(question)
         
         if answer in YES_NO_BASE:
-            response = f"❌ ИИ не сработал\n📡 {connection_msg}\n🤖 Ответ: {answer}"
+            response = f"❌ ИИ не сработал\n{connection_msg}"
         else:
-            response = f"✅ ИИ РАБОТАЕТ!\n📡 {connection_msg}\n🤖 Ответ: {answer}"
+            response = f"✅ ИИ РАБОТАЕТ!\n{connection_msg}\n🤖 Ответ: {answer}"
     else:
-        response = f"❌ ИИ недоступен\n📡 {connection_msg}"
+        response = f"❌ ИИ недоступен\n{connection_msg}"
     
     bot.send_message(message.chat.id, response, parse_mode='Markdown')
 
-@bot.message_handler(commands=['model_info'])
-def model_info(message):
-    """Информация о моделях"""
-    connection_ok, connection_msg = test_huggingface_connection()
+@bot.message_handler(commands=['test_english'])
+def test_english(message):
+    """Тест на английском"""
+    bot.send_message(message.chat.id, "🧪 *Testing AI with English...*", parse_mode='Markdown')
     
-    info = f"""
-🤖 *Информация о моделях:*
-
-{connection_msg}
-
-*Работающие модели:*
-• `microsoft/DialoGPT-small` - ✅ Рекомендуемая
-• `gpt2` - 🔄 Базовая модель  
-• `distilgpt2` - 🚀 Упрощенная
-
-*Если модели загружаются (503 ошибка):*
-- Подожди 1-2 минуты
-- Попробуй снова
-- Модель автоматически загрузится
-    """
-    bot.send_message(message.chat.id, info, parse_mode='Markdown')
+    questions = [
+        "Will it rain tomorrow?",
+        "Should I learn programming?",
+        "What is my future?"
+    ]
+    
+    question = random.choice(questions)
+    answer = get_huggingface_prediction(question)
+    
+    bot.send_message(message.chat.id, f"❓ *Q:* {question}\n🤖 *A:* {answer}", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -189,49 +197,49 @@ def handle_message(message):
         return
     
     if message.text == '🚀 Отправить запрос в вселенную':
-        question = "Что шепнёт вселенная сегодня?"
+        question = "What will happen today?"
     else:
         question = message.text
     
     user_locks[user_id] = current_time
     
-    bot.send_message(message.chat.id, "🔮 Трясём шар...", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔮 Shaking the ball...", parse_mode='Markdown')
     time.sleep(2)
     
-    if question != "Что шепнёт вселенная сегодня?":
+    if question != "What will happen today?":
         answer = get_huggingface_prediction(question)
     else:
         answer = random.choice(YES_NO_BASE)
     
     bot.send_message(message.chat.id, f"🔮 {answer}", parse_mode='Markdown')
     time.sleep(1)
-    bot.send_message(message.chat.id, "Готов к новому вопросу! 🚀", reply_markup=get_keyboard())
+    bot.send_message(message.chat.id, "Ready for new questions! 🚀", reply_markup=get_keyboard())
 
 @app.route('/')
 def home():
     connection_ok, connection_msg = test_huggingface_connection()
     return f"""
     <html>
-        <head><title>Магический шар</title></head>
+        <head><title>Magic Ball</title></head>
         <body>
-            <h1>🔮 Магический шар</h1>
+            <h1>🔮 Magic Ball</h1>
             <p>{connection_msg}</p>
-            <p><a href="/test">Тест API</a></p>
+            <p>Using GPT-2 model</p>
         </body>
     </html>
     """
 
 def start_bot_polling():
-    print("🔮 Запускаем бота...")
+    print("🔮 Starting bot...")
     while True:
         try:
             bot.polling(none_stop=True, interval=1)
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            print(f"❌ Error: {e}")
             time.sleep(10)
 
 if __name__ == '__main__':
-    print("🔮 Магический шар запущен!")
+    print("🔮 Magic Ball Started!")
     
     # Тестируем подключение
     connection_ok, connection_msg = test_huggingface_connection()
