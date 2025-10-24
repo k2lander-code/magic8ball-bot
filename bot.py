@@ -4,19 +4,32 @@ from openai import OpenAI
 import time
 import random
 import os
-import httpx  # Добавляем импорт
+import flask
+import threading
 
-# ТОЛЬКО из переменных окружения
+# Инициализация Flask приложения
+app = flask.Flask(__name__)
+
+# Переменные окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # URL твоего приложения на Render
 
-# Исправленная инициализация клиента
-client = OpenAI(
-    api_key=OPENAI_API_KEY,
-    http_client=httpx.Client()  # Убираем проблемный параметр proxies
-)
+# Детальная проверка токенов
+if not BOT_TOKEN:
+    print("❌ Критическая ошибка: BOT_TOKEN не установлен")
+    exit(1)
 
+if not OPENAI_API_KEY:
+    print("❌ Критическая ошибка: OPENAI_API_KEY не установлен")
+    exit(1)
+
+print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:] if len(BOT_TOKEN) > 15 else ''}")
+print(f"✅ OPENAI_API_KEY: {OPENAI_API_KEY[:10]}...{OPENAI_API_KEY[-5:] if len(OPENAI_API_KEY) > 15 else ''}")
+
+# Инициализация клиентов
 bot = telebot.TeleBot(BOT_TOKEN)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 YES_NO_BASE = [
     'Да, однозначно! ✨',
@@ -36,71 +49,184 @@ def get_keyboard():
     markup.add(button)
     return markup
 
+def test_openai_connection():
+    """Тестируем подключение к OpenAI"""
+    try:
+        print("🔍 Тестируем подключение к OpenAI...")
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Ответь одним словом: работаешь?"}],
+            max_tokens=10
+        )
+        answer = response.choices[0].message.content.strip()
+        print(f"✅ OpenAI тест: {answer}")
+        return True
+    except Exception as e:
+        print(f"❌ OpenAI тест не пройден: {e}")
+        return False
+
+@app.route('/')
+def home():
+    """Главная страница для проверки работы"""
+    openai_status = "✅ Работает" if test_openai_connection() else "❌ Не работает"
+    return f"""
+    <html>
+        <head><title>Магический шар</title></head>
+        <body>
+            <h1>🔮 Магический шар предсказаний</h1>
+            <p><strong>Статус:</strong> 🟢 Активен</p>
+            <p><strong>OpenAI:</strong> {openai_status}</p>
+            <p><strong>Telegram бот:</strong> ✅ Работает</p>
+            <p>Перейди в Telegram и напиши боту!</p>
+        </body>
+    </html>
+    """
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Webhook endpoint для Telegram"""
+    if flask.request.headers.get('content-type') == 'application/json':
+        json_string = flask.request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    else:
+        flask.abort(403)
+
+@app.route('/health')
+def health_check():
+    """Health check для Render"""
+    return {'status': 'healthy', 'service': 'magic8ball-bot'}
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     user_locks[user_id] = 0
-    bot.send_message(message.chat.id, 
-                     "🔮 *Привет, искатель тайн!*\nСпроси что угодно — я дам предсказание из шара.\nНажми кнопку или напиши вопрос.", 
-                     parse_mode='Markdown', reply_markup=get_keyboard())
+    bot.send_message(
+        message.chat.id,
+        "🔮 *Привет, искатель тайн!*\nСпроси что угодно — я дам предсказание из шара.\nНажми кнопку или напиши вопрос.", 
+        parse_mode='Markdown', 
+        reply_markup=get_keyboard()
+    )
+
+@bot.message_handler(commands=['status'])
+def status(message):
+    """Проверка статуса бота"""
+    openai_working = test_openai_connection()
+    status_text = "✅ Все системы работают!" if openai_working else "⚠️ OpenAI временно недоступен"
+    bot.send_message(message.chat.id, f"🔧 *Статус системы:*\n{status_text}", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
-    if user_id in user_locks and time.time() - user_locks[user_id] < 10:
-        remaining = int(10 - (time.time() - user_locks[user_id]))
+    current_time = time.time()
+    
+    # Проверка таймаута
+    if user_id in user_locks and current_time - user_locks[user_id] < 10:
+        remaining = int(10 - (current_time - user_locks[user_id]))
         bot.send_message(message.chat.id, f"⏳ *Подожди еще {remaining} сек...*", parse_mode='Markdown')
         return
     
-    if message.text == '🚀 Отправить запрос в вселенную':
-        question = "Что шепнёт вселенная сегодня?"
-    else:
-        question = message.text
+    # Определяем вопрос
+    question = "Что шепнёт вселенная сегодня?" if message.text == '🚀 Отправить запрос в вселенную' else message.text
     
-    # Проверка длины вопроса
+    # Проверка длины
     if len(question) > 200:
         bot.send_message(message.chat.id, "❌ Слишком длинный вопрос! Максимум 200 символов.")
         return
     
-    user_locks[user_id] = time.time()
+    user_locks[user_id] = current_time
     
+    # Трясем шар
     bot.send_message(message.chat.id, "🔮 *Трясём шар... Держись! Ш-ш-ш...* 🔮", parse_mode='Markdown')
     time.sleep(2)
     
+    # Получаем ответ
     word_count = len(question.split())
     if word_count <= 7 and random.random() > 0.3:
         answer = random.choice(YES_NO_BASE)
+        print(f"🎲 Использован случайный ответ: {answer}")
     else:
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": f"Ты — мистический шар предсказаний. Дай короткий, юмористический ответ до 25 слов на: '{question}'. Сделай как предсказание судьбы."}]
-            )
-            full_answer = response.choices[0].message.content.strip()
-            answer = full_answer[:25] + "..." if len(full_answer) > 25 else full_answer
-        except Exception as e:
-            print(f"OpenAI ошибка: {e}")
-            answer = "Вселенная молчит... Попробуй позже. 🔮"
+        answer = get_openai_prediction(question)
     
-    words = answer.split()
-    if len(words) <= 7:
-        bot.send_message(message.chat.id, f"🔮 *{answer}* 🔮", parse_mode='Markdown')
-    else:
-        for i in range(0, len(words), 7):
-            chunk = ' '.join(words[i:i+7])
-            bot.send_message(message.chat.id, f"🔮 *{chunk}* 🔮", parse_mode='Markdown')
-            if i + 7 < len(words):
-                time.sleep(5)
-    
+    # Отправляем ответ
+    bot.send_message(message.chat.id, f"🔮 *{answer}* 🔮", parse_mode='Markdown')
     time.sleep(1)
     bot.send_message(message.chat.id, "Готов к новому вопросу! 🚀", reply_markup=get_keyboard())
 
-if __name__ == '__main__':
-    while True:
+def get_openai_prediction(question):
+    """Получаем предсказание от OpenAI с детальным логированием"""
+    try:
+        print(f"🔄 Запрос к OpenAI: '{question}'")
+        
+        start_time = time.time()
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "Ты магический шар предсказаний. Отвечай кратко, мистически и с юмором. Максимум 20 слов. Формат: предсказание + эмодзи."
+                },
+                {"role": "user", "content": question}
+            ],
+            max_tokens=60,
+            temperature=0.9
+        )
+        
+        answer = response.choices[0].message.content.strip()
+        response_time = time.time() - start_time
+        
+        print(f"✅ OpenAI ответил за {response_time:.2f}с: '{answer}'")
+        return answer
+        
+    except Exception as e:
+        error_msg = f"❌ Ошибка OpenAI: {str(e)}"
+        print(error_msg)
+        return "Вселенная молчит... Попробуй позже. 🔮"
+
+def set_webhook():
+    """Установка webhook для Telegram"""
+    if WEBHOOK_URL:
         try:
-            print("🔮 Магический шар запущен! Нажми Ctrl+C для остановки.")
-            bot.polling(none_stop=True)
+            bot.remove_webhook()
+            time.sleep(1)
+            bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+            print(f"✅ Webhook установлен: {WEBHOOK_URL}/webhook")
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            print("🔄 Перезапуск через 15 секунд...")
-            time.sleep(15)
+            print(f"❌ Ошибка установки webhook: {e}")
+
+if __name__ == '__main__':
+    print("=" * 50)
+    print("🔮 Магический шар предсказаний")
+    print("🌐 Тип: Web Service")
+    print("🔐 Токены: ПРОВЕРЕНЫ")
+    
+    # Тестируем OpenAI при запуске
+    openai_ok = test_openai_connection()
+    print(f"🤖 OpenAI: {'✅ РАБОТАЕТ' if openai_ok else '❌ НЕ РАБОТАЕТ'}")
+    
+    # Устанавливаем webhook если указан URL
+    if WEBHOOK_URL:
+        set_webhook()
+        print("✅ Режим: Webhook")
+    else:
+        print("✅ Режим: Long Polling")
+        # Запускаем polling в отдельном потоке
+        def start_polling():
+            while True:
+                try:
+                    print("🔄 Запускаем polling...")
+                    bot.polling(none_stop=True, interval=1, timeout=60)
+                except Exception as e:
+                    print(f"💥 Ошибка polling: {e}")
+                    time.sleep(10)
+        
+        polling_thread = threading.Thread(target=start_polling, daemon=True)
+        polling_thread.start()
+    
+    print("✅ Статус: Запущен и готов к работе!")
+    print("=" * 50)
+    
+    # Запускаем Flask сервер
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
