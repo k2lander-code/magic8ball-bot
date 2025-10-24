@@ -4,12 +4,18 @@ from openai import OpenAI
 import time
 import random
 import os
+import httpx  # Добавляем импорт
 
-# ТОЛЬКО из переменных окружения - без fallback значений!
+# ТОЛЬКО из переменных окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Исправленная инициализация клиента
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    http_client=httpx.Client()  # Убираем проблемный параметр proxies
+)
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
 YES_NO_BASE = [
@@ -42,13 +48,19 @@ def start(message):
 def handle_message(message):
     user_id = message.from_user.id
     if user_id in user_locks and time.time() - user_locks[user_id] < 10:
-        bot.send_message(message.chat.id, "⏳ *Подожди, вселенная ещё думает... Не торопи судьбу!*" , parse_mode='Markdown')
+        remaining = int(10 - (time.time() - user_locks[user_id]))
+        bot.send_message(message.chat.id, f"⏳ *Подожди еще {remaining} сек...*", parse_mode='Markdown')
         return
     
     if message.text == '🚀 Отправить запрос в вселенную':
         question = "Что шепнёт вселенная сегодня?"
     else:
         question = message.text
+    
+    # Проверка длины вопроса
+    if len(question) > 200:
+        bot.send_message(message.chat.id, "❌ Слишком длинный вопрос! Максимум 200 символов.")
+        return
     
     user_locks[user_id] = time.time()
     
@@ -67,6 +79,7 @@ def handle_message(message):
             full_answer = response.choices[0].message.content.strip()
             answer = full_answer[:25] + "..." if len(full_answer) > 25 else full_answer
         except Exception as e:
+            print(f"OpenAI ошибка: {e}")
             answer = "Вселенная молчит... Попробуй позже. 🔮"
     
     words = answer.split()
@@ -85,8 +98,9 @@ def handle_message(message):
 if __name__ == '__main__':
     while True:
         try:
-            print("Бот запущен! Нажми Ctrl+C для остановки.")
+            print("🔮 Магический шар запущен! Нажми Ctrl+C для остановки.")
             bot.polling(none_stop=True)
         except Exception as e:
-            print(f"Ошибка: {e}")
+            print(f"❌ Ошибка: {e}")
+            print("🔄 Перезапуск через 15 секунд...")
             time.sleep(15)
