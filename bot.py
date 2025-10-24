@@ -5,15 +5,13 @@ import time
 import random
 import os
 
-# os.getenv для env vars Render (fallback — новые токены для локального теста)
-BOT_TOKEN = os.getenv('BOT_TOKEN', '8491504541:AAFRA7q2Kq6Tw_0jSSF9XWnyT7UZnk8_bXA')  # Новый токен TG
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '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')  # OpenAI ключ
+# ТОЛЬКО из переменных окружения - без fallback значений!
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-# OpenAI клиент БЕЗ proxies
 client = OpenAI(api_key=OPENAI_API_KEY)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# База простых да/нет
 YES_NO_BASE = [
     'Да, однозначно! ✨',
     'Нет, не судьба. 😔',
@@ -54,11 +52,9 @@ def handle_message(message):
     
     user_locks[user_id] = time.time()
     
-    # Тряска
     bot.send_message(message.chat.id, "🔮 *Трясём шар... Держись! Ш-ш-ш...* 🔮", parse_mode='Markdown')
     time.sleep(2)
     
-    # Логика
     word_count = len(question.split())
     if word_count <= 7 and random.random() > 0.3:
         answer = random.choice(YES_NO_BASE)
@@ -73,7 +69,6 @@ def handle_message(message):
         except Exception as e:
             answer = "Вселенная молчит... Попробуй позже. 🔮"
     
-    # Всплывание
     words = answer.split()
     if len(words) <= 7:
         bot.send_message(message.chat.id, f"🔮 *{answer}* 🔮", parse_mode='Markdown')
@@ -88,5 +83,10 @@ def handle_message(message):
     bot.send_message(message.chat.id, "Готов к новому вопросу! 🚀", reply_markup=get_keyboard())
 
 if __name__ == '__main__':
-    print("Бот запущен! Нажми Ctrl+C для остановки.")
-    bot.polling(none_stop=True)
+    while True:
+        try:
+            print("Бот запущен! Нажми Ctrl+C для остановки.")
+            bot.polling(none_stop=True)
+        except Exception as e:
+            print(f"Ошибка: {e}")
+            time.sleep(15)
