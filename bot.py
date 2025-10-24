@@ -1,49 +1,27 @@
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
-from openai import OpenAI
 import time
 import random
 import os
-import flask
-import threading
-import httpx
-
-# Инициализация Flask приложения
-app = flask.Flask(__name__)
+import requests
 
 # Переменные окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # URL твоего приложения на Render
+HF_API_TOKEN = os.getenv('HF_API_TOKEN')  # Твой токен test4
 
-# Детальная проверка токенов
+# Проверка токенов
 if not BOT_TOKEN:
-    print("❌ Критическая ошибка: BOT_TOKEN не установлен")
+    print("❌ BOT_TOKEN не установлен")
     exit(1)
 
-if not OPENAI_API_KEY:
-    print("❌ Критическая ошибка: OPENAI_API_KEY не установлен")
-    exit(1)
-
-print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:] if len(BOT_TOKEN) > 15 else ''}")
-print(f"✅ OPENAI_API_KEY: {OPENAI_API_KEY[:10]}...{OPENAI_API_KEY[-5:] if len(OPENAI_API_KEY) > 15 else ''}")
-
-# ИСПРАВЛЕННАЯ инициализация клиента OpenAI
-try:
-    client = OpenAI(
-        api_key=OPENAI_API_KEY,
-        http_client=httpx.Client()  # Убираем проблемный параметр proxies
-    )
-    print("✅ OpenAI клиент инициализирован")
-except Exception as e:
-    print(f"❌ Ошибка инициализации OpenAI: {e}")
-    client = None
+if not HF_API_TOKEN:
+    print("⚠️ HF_API_TOKEN не установлен - будем использовать только случайные ответы")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
 YES_NO_BASE = [
     'Да, однозначно! ✨',
-    'Нет, не судьба. 😔',
+    'Нет, не судьба. 😔', 
     'Возможно, подожди. ⏳',
     'Абсолютно верно! 👍',
     'Скорее нет. ❌',
@@ -59,63 +37,65 @@ def get_keyboard():
     markup.add(button)
     return markup
 
-def test_openai_connection():
-    """Тестируем подключение к OpenAI"""
-    if not client:
-        return False
+def get_huggingface_prediction(question):
+    """Предсказание через Hugging Face Inference API"""
+    if not HF_API_TOKEN:
+        return random.choice(YES_NO_BASE)
+    
     try:
-        print("🔍 Тестируем подключение к OpenAI...")
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": "Ответь одним словом: работаешь?"}],
-            max_tokens=10
-        )
-        answer = response.choices[0].message.content.strip()
-        print(f"✅ OpenAI тест: {answer}")
-        return True
+        # Используем DialoGPT-medium - хорош для диалогов
+        API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+        headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+        
+        # Промпт для магического шара
+        prompt = f"Ты - магический шар предсказаний. Ответь кратко и мистически на вопрос: '{question}'. Ответ должен быть не более 15 слов."
+        
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_length": 80,
+                "temperature": 0.9,
+                "do_sample": True,
+                "return_full_text": False
+            },
+            "options": {
+                "wait_for_model": True  # Ждем если модель загружается
+            }
+        }
+        
+        print(f"🔄 Отправляем запрос в Hugging Face: {question[:30]}...")
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"✅ Hugging Face ответ: {result}")
+            
+            if isinstance(result, list) and len(result) > 0:
+                answer = result[0]['generated_text'].strip()
+                # Убираем повторения промпта если есть
+                if prompt in answer:
+                    answer = answer.replace(prompt, '').strip()
+                return answer if answer else random.choice(YES_NO_BASE)
+            else:
+                return random.choice(YES_NO_BASE)
+        else:
+            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
+            return random.choice(YES_NO_BASE)
+            
     except Exception as e:
-        print(f"❌ OpenAI тест не пройден: {e}")
-        return False
-
-@app.route('/')
-def home():
-    """Главная страница для проверки работы"""
-    openai_status = "✅ Работает" if test_openai_connection() else "❌ Не работает"
-    return f"""
-    <html>
-        <head><title>Магический шар</title></head>
-        <body>
-            <h1>🔮 Магический шар предсказаний</h1>
-            <p><strong>Статус:</strong> 🟢 Активен</p>
-            <p><strong>OpenAI:</strong> {openai_status}</p>
-            <p><strong>Telegram бот:</strong> ✅ Работает</p>
-            <p>Перейди в Telegram и напиши боту!</p>
-        </body>
-    </html>
-    """
-
-@app.route('/health')
-def health_check():
-    """Health check для Render"""
-    return {'status': 'healthy', 'service': 'magic8ball-bot'}
+        print(f"❌ Ошибка Hugging Face: {e}")
+        return random.choice(YES_NO_BASE)
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     user_locks[user_id] = 0
     bot.send_message(
-        message.chat.id,
-        "🔮 *Привет, искатель тайн!*\nСпроси что угодно — я дам предсказание из шара.\nНажми кнопку или напиши вопрос.", 
+        message.chat.id, 
+        "🔮 *Привет! Я магический шар!*\nСпроси что угодно — я дам предсказание!", 
         parse_mode='Markdown', 
         reply_markup=get_keyboard()
     )
-
-@bot.message_handler(commands=['status'])
-def status(message):
-    """Проверка статуса бота"""
-    openai_working = test_openai_connection()
-    status_text = "✅ Все системы работают!" if openai_working else "⚠️ OpenAI временно недоступен"
-    bot.send_message(message.chat.id, f"🔧 *Статус системы:*\n{status_text}", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -125,21 +105,16 @@ def handle_message(message):
     # Проверка таймаута
     if user_id in user_locks and current_time - user_locks[user_id] < 10:
         remaining = int(10 - (current_time - user_locks[user_id]))
-        bot.send_message(message.chat.id, f"⏳ *Подожди еще {remaining} сек...*", parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"⏳ Подожди {remaining} сек...", parse_mode='Markdown')
         return
     
     # Определяем вопрос
     question = "Что шепнёт вселенная сегодня?" if message.text == '🚀 Отправить запрос в вселенную' else message.text
     
-    # Проверка длины
-    if len(question) > 200:
-        bot.send_message(message.chat.id, "❌ Слишком длинный вопрос! Максимум 200 символов.")
-        return
-    
     user_locks[user_id] = current_time
     
     # Трясем шар
-    bot.send_message(message.chat.id, "🔮 *Трясём шар... Держись! Ш-ш-ш...* 🔮", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔮 Трясём шар... Ш-ш-ш...", parse_mode='Markdown')
     time.sleep(2)
     
     # Получаем ответ
@@ -148,74 +123,15 @@ def handle_message(message):
         answer = random.choice(YES_NO_BASE)
         print(f"🎲 Использован случайный ответ: {answer}")
     else:
-        answer = get_openai_prediction(question)
+        answer = get_huggingface_prediction(question)
+        print(f"🤖 AI ответ: {answer}")
     
     # Отправляем ответ
-    bot.send_message(message.chat.id, f"🔮 *{answer}* 🔮", parse_mode='Markdown')
+    bot.send_message(message.chat.id, f"🔮 *{answer}*", parse_mode='Markdown')
     time.sleep(1)
     bot.send_message(message.chat.id, "Готов к новому вопросу! 🚀", reply_markup=get_keyboard())
 
-def get_openai_prediction(question):
-    """Получаем предсказание от OpenAI с детальным логированием"""
-    if not client:
-        return "Вселенная недоступна... 🔮"
-    
-    try:
-        print(f"🔄 Запрос к OpenAI: '{question}'")
-        
-        start_time = time.time()
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "Ты магический шар предсказаний. Отвечай кратко, мистически и с юмором. Максимум 20 слов. Формат: предсказание + эмодзи."
-                },
-                {"role": "user", "content": question}
-            ],
-            max_tokens=60,
-            temperature=0.9
-        )
-        
-        answer = response.choices[0].message.content.strip()
-        response_time = time.time() - start_time
-        
-        print(f"✅ OpenAI ответил за {response_time:.2f}с: '{answer}'")
-        return answer
-        
-    except Exception as e:
-        error_msg = f"❌ Ошибка OpenAI: {str(e)}"
-        print(error_msg)
-        return "Вселенная молчит... Попробуй позже. 🔮"
-
 if __name__ == '__main__':
-    print("=" * 50)
-    print("🔮 Магический шар предсказаний")
-    print("🌐 Тип: Web Service")
-    print("🔐 Токены: ПРОВЕРЕНЫ")
-    
-    # Тестируем OpenAI при запуске
-    openai_ok = test_openai_connection()
-    print(f"🤖 OpenAI: {'✅ РАБОТАЕТ' if openai_ok else '❌ НЕ РАБОТАЕТ'}")
-    
-    print("✅ Режим: Long Polling + Web Server")
-    
-    # Запускаем polling в отдельном потоке
-    def start_polling():
-        while True:
-            try:
-                print("🔄 Запускаем polling...")
-                bot.polling(none_stop=True, interval=1, timeout=60)
-            except Exception as e:
-                print(f"💥 Ошибка polling: {e}")
-                time.sleep(10)
-    
-    polling_thread = threading.Thread(target=start_polling, daemon=True)
-    polling_thread.start()
-    
-    print("✅ Статус: Запущен и готов к работе!")
-    print("=" * 50)
-    
-    # Запускаем Flask сервер
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    print("🔮 Магический шар запущен!")
+    print(f"🤖 Hugging Face: {'✅ Доступен' if HF_API_TOKEN else '❌ Не настроен'}")
+    bot.polling(none_stop=True)
