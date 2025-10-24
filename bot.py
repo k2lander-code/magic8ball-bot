@@ -4,18 +4,20 @@ import time
 import random
 import os
 import requests
+import threading
+from flask import Flask
+
+# Инициализация Flask для Web Service
+app = Flask(__name__)
 
 # Переменные окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-HF_API_TOKEN = os.getenv('HF_API_TOKEN')  # Твой токен test4
+HF_API_TOKEN = os.getenv('HF_API_TOKEN')
 
 # Проверка токенов
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN не установлен")
     exit(1)
-
-if not HF_API_TOKEN:
-    print("⚠️ HF_API_TOKEN не установлен - будем использовать только случайные ответы")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -38,49 +40,26 @@ def get_keyboard():
     return markup
 
 def get_huggingface_prediction(question):
-    """Предсказание через Hugging Face Inference API"""
     if not HF_API_TOKEN:
         return random.choice(YES_NO_BASE)
     
     try:
-        # Используем DialoGPT-medium - хорош для диалогов
         API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
         headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
         
-        # Промпт для магического шара
-        prompt = f"Ты - магический шар предсказаний. Ответь кратко и мистически на вопрос: '{question}'. Ответ должен быть не более 15 слов."
-        
+        prompt = f"Ты - магический шар предсказаний. Ответь кратко и мистически: {question}"
         payload = {
             "inputs": prompt,
-            "parameters": {
-                "max_length": 80,
-                "temperature": 0.9,
-                "do_sample": True,
-                "return_full_text": False
-            },
-            "options": {
-                "wait_for_model": True  # Ждем если модель загружается
-            }
+            "parameters": {"max_length": 60, "temperature": 0.9}
         }
         
-        print(f"🔄 Отправляем запрос в Hugging Face: {question[:30]}...")
         response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        result = response.json()
         
-        if response.status_code == 200:
-            result = response.json()
-            print(f"✅ Hugging Face ответ: {result}")
-            
-            if isinstance(result, list) and len(result) > 0:
-                answer = result[0]['generated_text'].strip()
-                # Убираем повторения промпта если есть
-                if prompt in answer:
-                    answer = answer.replace(prompt, '').strip()
-                return answer if answer else random.choice(YES_NO_BASE)
-            else:
-                return random.choice(YES_NO_BASE)
-        else:
-            print(f"❌ Ошибка API: {response.status_code} - {response.text}")
-            return random.choice(YES_NO_BASE)
+        if isinstance(result, list) and len(result) > 0:
+            answer = result[0]['generated_text'].strip()
+            return answer if answer else random.choice(YES_NO_BASE)
+        return random.choice(YES_NO_BASE)
             
     except Exception as e:
         print(f"❌ Ошибка Hugging Face: {e}")
@@ -102,36 +81,64 @@ def handle_message(message):
     user_id = message.from_user.id
     current_time = time.time()
     
-    # Проверка таймаута
     if user_id in user_locks and current_time - user_locks[user_id] < 10:
         remaining = int(10 - (current_time - user_locks[user_id]))
         bot.send_message(message.chat.id, f"⏳ Подожди {remaining} сек...", parse_mode='Markdown')
         return
     
-    # Определяем вопрос
-    question = "Что шепнёт вселенная сегодня?" if message.text == '🚀 Отправить запрос в вселенную' else message.text
-    
+    question = "Что шепнёт вселенная?" if message.text == '🚀 Отправить запрос в вселенную' else message.text
     user_locks[user_id] = current_time
     
-    # Трясем шар
     bot.send_message(message.chat.id, "🔮 Трясём шар... Ш-ш-ш...", parse_mode='Markdown')
     time.sleep(2)
     
-    # Получаем ответ
     word_count = len(question.split())
     if word_count <= 7 and random.random() > 0.3:
         answer = random.choice(YES_NO_BASE)
-        print(f"🎲 Использован случайный ответ: {answer}")
     else:
         answer = get_huggingface_prediction(question)
-        print(f"🤖 AI ответ: {answer}")
     
-    # Отправляем ответ
     bot.send_message(message.chat.id, f"🔮 *{answer}*", parse_mode='Markdown')
     time.sleep(1)
     bot.send_message(message.chat.id, "Готов к новому вопросу! 🚀", reply_markup=get_keyboard())
 
+# Flask маршруты для Web Service
+@app.route('/')
+def home():
+    return """
+    <html>
+        <head><title>Магический шар</title></head>
+        <body>
+            <h1>🔮 Магический шар предсказаний</h1>
+            <p><strong>Статус:</strong> 🟢 Активен</p>
+            <p><strong>Telegram бот:</strong> ✅ Работает</p>
+            <p>Бот работает в фоновом режиме через long-polling</p>
+        </body>
+    </html>
+    """
+
+@app.route('/health')
+def health_check():
+    return {'status': 'healthy', 'service': 'magic8ball-bot'}
+
+def start_bot_polling():
+    """Запуск бота в отдельном потоке"""
+    print("🔮 Запускаем Telegram бота...")
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=1)
+        except Exception as e:
+            print(f"❌ Ошибка бота: {e}")
+            time.sleep(10)
+
 if __name__ == '__main__':
-    print("🔮 Магический шар запущен!")
+    print("🔮 Магический шар запущен как Web Service!")
     print(f"🤖 Hugging Face: {'✅ Доступен' if HF_API_TOKEN else '❌ Не настроен'}")
-    bot.polling(none_stop=True)
+    
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=start_bot_polling, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask сервер
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
