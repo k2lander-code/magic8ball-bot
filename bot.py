@@ -6,6 +6,7 @@ import random
 import os
 import flask
 import threading
+import httpx
 
 # Инициализация Flask приложения
 app = flask.Flask(__name__)
@@ -27,9 +28,18 @@ if not OPENAI_API_KEY:
 print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...{BOT_TOKEN[-5:] if len(BOT_TOKEN) > 15 else ''}")
 print(f"✅ OPENAI_API_KEY: {OPENAI_API_KEY[:10]}...{OPENAI_API_KEY[-5:] if len(OPENAI_API_KEY) > 15 else ''}")
 
-# Инициализация клиентов
+# ИСПРАВЛЕННАЯ инициализация клиента OpenAI
+try:
+    client = OpenAI(
+        api_key=OPENAI_API_KEY,
+        http_client=httpx.Client()  # Убираем проблемный параметр proxies
+    )
+    print("✅ OpenAI клиент инициализирован")
+except Exception as e:
+    print(f"❌ Ошибка инициализации OpenAI: {e}")
+    client = None
+
 bot = telebot.TeleBot(BOT_TOKEN)
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 YES_NO_BASE = [
     'Да, однозначно! ✨',
@@ -51,6 +61,8 @@ def get_keyboard():
 
 def test_openai_connection():
     """Тестируем подключение к OpenAI"""
+    if not client:
+        return False
     try:
         print("🔍 Тестируем подключение к OpenAI...")
         response = client.chat.completions.create(
@@ -81,17 +93,6 @@ def home():
         </body>
     </html>
     """
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Webhook endpoint для Telegram"""
-    if flask.request.headers.get('content-type') == 'application/json':
-        json_string = flask.request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'OK', 200
-    else:
-        flask.abort(403)
 
 @app.route('/health')
 def health_check():
@@ -156,6 +157,9 @@ def handle_message(message):
 
 def get_openai_prediction(question):
     """Получаем предсказание от OpenAI с детальным логированием"""
+    if not client:
+        return "Вселенная недоступна... 🔮"
+    
     try:
         print(f"🔄 Запрос к OpenAI: '{question}'")
         
@@ -184,17 +188,6 @@ def get_openai_prediction(question):
         print(error_msg)
         return "Вселенная молчит... Попробуй позже. 🔮"
 
-def set_webhook():
-    """Установка webhook для Telegram"""
-    if WEBHOOK_URL:
-        try:
-            bot.remove_webhook()
-            time.sleep(1)
-            bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-            print(f"✅ Webhook установлен: {WEBHOOK_URL}/webhook")
-        except Exception as e:
-            print(f"❌ Ошибка установки webhook: {e}")
-
 if __name__ == '__main__':
     print("=" * 50)
     print("🔮 Магический шар предсказаний")
@@ -205,24 +198,20 @@ if __name__ == '__main__':
     openai_ok = test_openai_connection()
     print(f"🤖 OpenAI: {'✅ РАБОТАЕТ' if openai_ok else '❌ НЕ РАБОТАЕТ'}")
     
-    # Устанавливаем webhook если указан URL
-    if WEBHOOK_URL:
-        set_webhook()
-        print("✅ Режим: Webhook")
-    else:
-        print("✅ Режим: Long Polling")
-        # Запускаем polling в отдельном потоке
-        def start_polling():
-            while True:
-                try:
-                    print("🔄 Запускаем polling...")
-                    bot.polling(none_stop=True, interval=1, timeout=60)
-                except Exception as e:
-                    print(f"💥 Ошибка polling: {e}")
-                    time.sleep(10)
-        
-        polling_thread = threading.Thread(target=start_polling, daemon=True)
-        polling_thread.start()
+    print("✅ Режим: Long Polling + Web Server")
+    
+    # Запускаем polling в отдельном потоке
+    def start_polling():
+        while True:
+            try:
+                print("🔄 Запускаем polling...")
+                bot.polling(none_stop=True, interval=1, timeout=60)
+            except Exception as e:
+                print(f"💥 Ошибка polling: {e}")
+                time.sleep(10)
+    
+    polling_thread = threading.Thread(target=start_polling, daemon=True)
+    polling_thread.start()
     
     print("✅ Статус: Запущен и готов к работе!")
     print("=" * 50)
