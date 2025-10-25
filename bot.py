@@ -9,7 +9,7 @@ app = FastAPI(title="ChatBot LLM")
 
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 # Проверенная рабочая модель через API Hugging Face
-MODEL_URL = "https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct"
+MODEL_URL = "https://router.huggingface.co/v1"
 
 headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
