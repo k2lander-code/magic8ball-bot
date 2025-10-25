@@ -8,7 +8,7 @@ load_dotenv()
 app = FastAPI()
 
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-MODEL_URL = "https://api-inference.huggingface.co/models/gpt2"  # можно заменить на свой
+MODEL_URL = "https://api-inference.huggingface.co/models/distilgpt2" # можно заменить на свой
 
 @app.get("/")
 def root():
