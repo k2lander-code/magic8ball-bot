@@ -1,61 +1,30 @@
-from fastapi import FastAPI, Query
-import requests
 import os
-from dotenv import load_dotenv
+from openai import OpenAI
 
-load_dotenv()
+# Установи токен Hugging Face
+os.environ["HF_TOKEN"] = "hf_ВАШ_ТОКЕН"
 
-app = FastAPI(title="ChatBot LLM")
+# Создаём клиент OpenAI, но через Hugging Face Router
+client = OpenAI(
+    base_url="https://router.huggingface.co/v1",
+    api_key=os.environ["HF_TOKEN"]
+)
 
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-# Проверенная рабочая модель через API Hugging Face
-MODEL_URL = "https://router.huggingface.co/v1"
+# Модель
+MODEL_NAME = "swiss-ai/Apertus-8B-Instruct-2509:publicai"
 
-headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+# Вопрос
+prompt = "Сколько планет в Солнечной системе и какие, кратко до 20 слов."
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Server is running on Render!"}
+# Отправка запроса
+completion = client.chat.completions.create(
+    model=MODEL_NAME,
+    messages=[{"role": "user", "content": prompt}]
+)
 
-@app.get("/ping-hf")
-def ping_huggingface():
-    payload = {"inputs": "Привет, как дела?"}
-    try:
-        resp = requests.post(MODEL_URL, headers=headers, json=payload, timeout=20)
-        if not resp.ok:
-            return {
-                "status": "error",
-                "http_status": resp.status_code,
-                "response_text": resp.text,
-                "hint": "Проверьте MODEL_URL, HF_API_TOKEN и права доступа модели"
-            }
-        return {"status": "success", "huggingface_response": resp.json()}
-    except requests.exceptions.RequestException as e:
-        return {"status": "error", "message": str(e)}
+# Получаем текст ответа
+answer = completion.choices[0].message["content"]
 
-@app.get("/chat")
-def chat(prompt: str = Query(..., description="Ваш текст для LLM")):
-    """
-    Эндпоинт /chat?prompt=Текст
-    Возвращает ответ модели Hugging Face.
-    """
-    payload = {"inputs": prompt}
-    try:
-        resp = requests.post(MODEL_URL, headers=headers, json=payload, timeout=40)
-        if not resp.ok:
-            return {
-                "status": "error",
-                "http_status": resp.status_code,
-                "response_text": resp.text,
-                "hint": "Проверьте MODEL_URL, HF_API_TOKEN и права доступа модели"
-            }
-        data = resp.json()
-        # Ответ модели в простом виде
-        generated_text = data[0]["generated_text"] if isinstance(data, list) and "generated_text" in data[0] else str(data)
-        return {"status": "success", "prompt": prompt, "response": generated_text}
-    except requests.exceptions.RequestException as e:
-        return {"status": "error", "message": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+# Выводим в консоль
+print("Ответ модели:")
+print(answer)
